@@ -12,6 +12,7 @@ import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.util.Random;
 
 public class MachineMonitorServer extends MachineMonitorGrpc.MachineMonitorImplBase {
 
@@ -43,6 +44,28 @@ public class MachineMonitorServer extends MachineMonitorGrpc.MachineMonitorImplB
                 .build();
 
         responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void streamSensorData(MonitorRequest request, StreamObserver<SensorData> responseObserver) {
+        System.out.println("Starting data stream for: " + request.getMachineId());
+        Random random = new Random();
+
+        try {
+            for (int i = 0; i < 10; i++) {
+                SensorData data = SensorData.newBuilder()
+                        .setTemperature(20 + (30 * random.nextDouble())) 
+                        .setPerformanceLoad(random.nextDouble() * 100)
+                        .build();
+
+                responseObserver.onNext(data);
+                Thread.sleep(1000);
+            }
+        } catch (InterruptedException e) {
+            System.out.println("Stream interrupted");
+        }
+
         responseObserver.onCompleted();
     }
 }
