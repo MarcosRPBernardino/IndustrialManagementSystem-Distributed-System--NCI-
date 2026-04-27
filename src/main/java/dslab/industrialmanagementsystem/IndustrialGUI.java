@@ -35,10 +35,10 @@ public class IndustrialGUI extends JFrame {
         topPanel.add(new JLabel("Machine ID:"));
         machineIdInput = new JTextField(10);
         topPanel.add(machineIdInput);
-        
+
         JButton btnCheck = new JButton("Check Status");
         topPanel.add(btnCheck);
-        
+
         add(topPanel, BorderLayout.NORTH);
 
         consoleLog = new JTextArea();
@@ -51,9 +51,32 @@ public class IndustrialGUI extends JFrame {
 
         btnCheck.addActionListener(e -> {
             if (monitorHost != null) {
-                log("System: Connecting to Monitor at " + monitorHost + ":" + monitorPort);
+                String id = machineIdInput.getText();
+                if (id.isEmpty()) {
+                    log("Warning: Please enter a Machine ID.");
+                    return;
+                }
+
+                log("System: Connecting to Monitor via gRPC...");
+
+                ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort)
+                        .usePlaintext()
+                        .build();
+
+                try {
+                    MachineMonitorGrpc.MachineMonitorBlockingStub stub = MachineMonitorGrpc.newBlockingStub(channel);
+                    StatusRequest request = StatusRequest.newBuilder()
+                            .setMachineId(id)
+                            .build();
+                    StatusResponse response = stub.checkMachineStatus(request);
+                    log("SERVER RESPONSE: " + response.getDescription() + " (Active: " + response.getIsActive() + ")");
+                } catch (Exception ex) {
+                    log("gRPC Error: " + ex.getMessage());
+                } finally {
+                    channel.shutdown();
+                }
             } else {
-                log("Error: Machine Monitor Service not discovered yet! Please wait...");
+                log("Error: Machine Monitor Service not discovered yet!");
             }
         });
     }
