@@ -30,6 +30,8 @@ public class IndustrialGUI extends JFrame {
     private JTextField machineIdInput;
     private volatile String monitorHost;
     private volatile int monitorPort;
+    private volatile String productionHost;
+    private volatile int productionPort;
 
     public IndustrialGUI() {
         setTitle("Industrial Management System - Controller");
@@ -47,6 +49,9 @@ public class IndustrialGUI extends JFrame {
 
         JButton btnStream = new JButton("Monitor Telemetry");
         topPanel.add(btnStream);
+
+        JButton btnUpload = new JButton("Upload Production Logs");
+        topPanel.add(btnUpload);
 
         add(topPanel, BorderLayout.NORTH);
 
@@ -88,7 +93,7 @@ public class IndustrialGUI extends JFrame {
                 log("Error: Machine Monitor Service not discovered yet!");
             }
         });
- 
+
         btnStream.addActionListener(e -> {
             if (monitorHost != null) {
                 log("System: Starting Telemetry Stream...");
@@ -125,6 +130,49 @@ public class IndustrialGUI extends JFrame {
                 log("Error: Service not found.");
             }
         });
+
+        btnUpload.addActionListener(e -> {
+            if (productionHost != null) {
+                log("System: Starting Batch Upload...");
+                ManagedChannel channel = ManagedChannelBuilder.forAddress(productionHost, productionPort)
+                        .usePlaintext().build();
+
+                ProductionManagerGrpc.ProductionManagerStub asyncStub = ProductionManagerGrpc.newStub(channel);
+
+                StreamObserver<ProductionSummary> responseObserver = new StreamObserver<>() {
+                    @Override
+                    public void onNext(ProductionSummary summary) {
+                        log("SERVER SUMMARY: Processed " + summary.getTotalProcessed()
+                                + " items with average quality: " + String.format("%.2f", summary.getAverageQuality()));
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        log("Upload Error: " + t.getMessage());
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                        channel.shutdown();
+                    }
+                };
+
+                StreamObserver<LogEntry> requestObserver = asyncStub.uploadProductionLog(responseObserver);
+
+                try {
+                    log("System: Sending 3 production logs...");
+                    requestObserver.onNext(LogEntry.newBuilder().setProductId("A1").setQualityScore(85).build());
+                    requestObserver.onNext(LogEntry.newBuilder().setProductId("B2").setQualityScore(92).build());
+                    requestObserver.onNext(LogEntry.newBuilder().setProductId("C3").setQualityScore(78).build());
+
+                    requestObserver.onCompleted();
+                } catch (Exception ex) {
+                    log("Error during stream: " + ex.getMessage());
+                }
+            } else {
+                log("Error: Production Service not found.");
+            }
+        });
     }
 
     private void discoverServices() {
@@ -153,6 +201,23 @@ public class IndustrialGUI extends JFrame {
                 }
             });
 
+            jmdns.addServiceListener("_production-manager._tcp.local.", new ServiceListener() {
+                @Override
+                public void serviceAdded(ServiceEvent event) {
+                    jmdns.requestServiceInfo(event.getType(), event.getName());
+                }
+
+                @Override
+                public void serviceRemoved(ServiceEvent event) {
+                }
+
+                @Override
+                public void serviceResolved(ServiceEvent event) {
+                    productionHost = event.getInfo().getHostAddresses()[0];
+                    productionPort = event.getInfo().getPort();
+                    log("RESOLVED: Production Manager at " + productionHost + ":" + productionPort);
+                }
+            });
         } catch (IOException e) {
             log("JmDNS Error: " + e.getMessage());
         }
