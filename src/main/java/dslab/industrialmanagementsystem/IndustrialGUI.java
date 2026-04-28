@@ -17,6 +17,12 @@ import java.io.IOException;
 import java.net.InetAddress;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.stub.StreamObserver;
+//import industry.IndustryService.StatusRequest;
+//import industry.IndustryService.StatusResponse;
+//import industry.IndustryService.MonitorRequest;
+//import industry.IndustryService.SensorData;
+//import industry.MachineMonitorGrpc;
 
 public class IndustrialGUI extends JFrame {
 
@@ -38,6 +44,9 @@ public class IndustrialGUI extends JFrame {
 
         JButton btnCheck = new JButton("Check Status");
         topPanel.add(btnCheck);
+
+        JButton btnStream = new JButton("Monitor Telemetry");
+        topPanel.add(btnStream);
 
         add(topPanel, BorderLayout.NORTH);
 
@@ -77,6 +86,43 @@ public class IndustrialGUI extends JFrame {
                 }
             } else {
                 log("Error: Machine Monitor Service not discovered yet!");
+            }
+        });
+ 
+        btnStream.addActionListener(e -> {
+            if (monitorHost != null) {
+                log("System: Starting Telemetry Stream...");
+
+                ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort)
+                        .usePlaintext().build();
+
+                MachineMonitorGrpc.MachineMonitorStub asyncStub = MachineMonitorGrpc.newStub(channel);
+
+                MonitorRequest request = MonitorRequest.newBuilder()
+                        .setMachineId(machineIdInput.getText())
+                        .build();
+
+                asyncStub.streamSensorData(request, new StreamObserver<SensorData>() {
+                    @Override
+                    public void onNext(SensorData data) {
+                        log(String.format("TELEMETRY [%s]: Temp: %.2f°C | Load: %.2f%%",
+                                machineIdInput.getText(), data.getTemperature(), data.getPerformanceLoad()));
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        log("Stream Error: " + t.getMessage());
+                        channel.shutdown();
+                    }
+
+                    @Override
+                    public void onCompleted() {
+                        log("System: Stream completed by server.");
+                        channel.shutdown();
+                    }
+                });
+            } else {
+                log("Error: Service not found.");
             }
         });
     }
