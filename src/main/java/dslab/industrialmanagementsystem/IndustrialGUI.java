@@ -18,11 +18,6 @@ import java.net.InetAddress;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.stub.StreamObserver;
-//import industry.IndustryService.StatusRequest;
-//import industry.IndustryService.StatusResponse;
-//import industry.IndustryService.MonitorRequest;
-//import industry.IndustryService.SensorData;
-//import industry.MachineMonitorGrpc;
 
 public class IndustrialGUI extends JFrame {
 
@@ -32,26 +27,32 @@ public class IndustrialGUI extends JFrame {
     private volatile int monitorPort;
     private volatile String productionHost;
     private volatile int productionPort;
+    private volatile String emergencyHost;
+    private volatile int emergencyPort;
 
     public IndustrialGUI() {
         setTitle("Industrial Management System - Controller");
-        setSize(600, 500);
+        setSize(700, 550);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
         JPanel topPanel = new JPanel(new FlowLayout());
         topPanel.add(new JLabel("Machine ID:"));
-        machineIdInput = new JTextField(10);
+        machineIdInput = new JTextField("M1", 5);
         topPanel.add(machineIdInput);
 
         JButton btnCheck = new JButton("Check Status");
-        topPanel.add(btnCheck);
-
         JButton btnStream = new JButton("Monitor Telemetry");
-        topPanel.add(btnStream);
+        JButton btnUpload = new JButton("Upload Logs");
+        JButton btnEmergency = new JButton("EMERGENCY");
 
-        JButton btnUpload = new JButton("Upload Production Logs");
+        btnEmergency.setBackground(Color.RED);
+        btnEmergency.setForeground(Color.WHITE);
+
+        topPanel.add(btnCheck);
+        topPanel.add(btnStream);
         topPanel.add(btnUpload);
+        topPanel.add(btnEmergency);
 
         add(topPanel, BorderLayout.NORTH);
 
@@ -61,118 +62,12 @@ public class IndustrialGUI extends JFrame {
         consoleLog.setForeground(Color.GREEN);
         add(new JScrollPane(consoleLog), BorderLayout.CENTER);
 
+        btnCheck.addActionListener(e -> checkStatus());
+        btnStream.addActionListener(e -> streamTelemetry());
+        btnUpload.addActionListener(e -> uploadProduction());
+        btnEmergency.addActionListener(e -> triggerEmergency());
+
         new Thread(this::discoverServices).start();
-
-        btnCheck.addActionListener(e -> {
-            if (monitorHost != null) {
-                String id = machineIdInput.getText();
-                if (id.isEmpty()) {
-                    log("Warning: Please enter a Machine ID.");
-                    return;
-                }
-
-                log("System: Connecting to Monitor via gRPC...");
-
-                ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort)
-                        .usePlaintext()
-                        .build();
-
-                try {
-                    MachineMonitorGrpc.MachineMonitorBlockingStub stub = MachineMonitorGrpc.newBlockingStub(channel);
-                    StatusRequest request = StatusRequest.newBuilder()
-                            .setMachineId(id)
-                            .build();
-                    StatusResponse response = stub.checkMachineStatus(request);
-                    log("SERVER RESPONSE: " + response.getDescription() + " (Active: " + response.getIsActive() + ")");
-                } catch (Exception ex) {
-                    log("gRPC Error: " + ex.getMessage());
-                } finally {
-                    channel.shutdown();
-                }
-            } else {
-                log("Error: Machine Monitor Service not discovered yet!");
-            }
-        });
-
-        btnStream.addActionListener(e -> {
-            if (monitorHost != null) {
-                log("System: Starting Telemetry Stream...");
-
-                ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort)
-                        .usePlaintext().build();
-
-                MachineMonitorGrpc.MachineMonitorStub asyncStub = MachineMonitorGrpc.newStub(channel);
-
-                MonitorRequest request = MonitorRequest.newBuilder()
-                        .setMachineId(machineIdInput.getText())
-                        .build();
-
-                asyncStub.streamSensorData(request, new StreamObserver<SensorData>() {
-                    @Override
-                    public void onNext(SensorData data) {
-                        log(String.format("TELEMETRY [%s]: Temp: %.2f°C | Load: %.2f%%",
-                                machineIdInput.getText(), data.getTemperature(), data.getPerformanceLoad()));
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        log("Stream Error: " + t.getMessage());
-                        channel.shutdown();
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        log("System: Stream completed by server.");
-                        channel.shutdown();
-                    }
-                });
-            } else {
-                log("Error: Service not found.");
-            }
-        });
-
-        btnUpload.addActionListener(e -> {
-            if (productionHost != null) {
-                log("System: Starting Batch Upload...");
-                ManagedChannel channel = ManagedChannelBuilder.forAddress(productionHost, productionPort)
-                        .usePlaintext().build();
-
-                ProductionManagerGrpc.ProductionManagerStub asyncStub = ProductionManagerGrpc.newStub(channel);
-
-                StreamObserver<ProductionSummary> responseObserver = new StreamObserver<>() {
-                    @Override
-                    public void onNext(ProductionSummary summary) {
-                        log("SERVER SUMMARY: Processed " + summary.getTotalProcessed()
-                                + " items with average quality: " + String.format("%.2f", summary.getAverageQuality()));
-                    }
-
-                    @Override
-                    public void onError(Throwable t) {
-                        log("Upload Error: " + t.getMessage());
-                    }
-
-                    @Override
-                    public void onCompleted() {
-                        channel.shutdown();
-                    }
-                };
-
-                StreamObserver<LogEntry> requestObserver = asyncStub.uploadProductionLog(responseObserver);
-
-                try {
-                    log("System: Sending 3 production logs...");
-                    requestObserver.onNext(LogEntry.newBuilder().setProductId("A1").setQualityScore(85).build());
-                    requestObserver.onNext(LogEntry.newBuilder().setProductId("B2").setQualityScore(92).build());
-                    requestObserver.onNext(LogEntry.newBuilder().setProductId("C3").setQualityScore(78).build());
-
-                    requestObserver.onCompleted();
-                } catch (Exception ex) {
-                    log("Error during stream: " + ex.getMessage());
-                }
-            } else {
-                log("Error: Production Service not found.");
-            }
-        });
     }
 
     private void discoverServices() {
@@ -180,28 +75,7 @@ public class IndustrialGUI extends JFrame {
             log("System: Looking for services on network...");
             JmDNS jmdns = JmDNS.create(InetAddress.getLocalHost());
 
-            jmdns.addServiceListener("_machine-monitor._tcp.local.", new ServiceListener() {
-                @Override
-                public void serviceAdded(ServiceEvent event) {
-                    log("Service found: " + event.getName());
-                    jmdns.requestServiceInfo(event.getType(), event.getName());
-                }
-
-                @Override
-                public void serviceRemoved(ServiceEvent event) {
-                    log("Service offline: " + event.getName());
-                    monitorHost = null;
-                }
-
-                @Override
-                public void serviceResolved(ServiceEvent event) {
-                    monitorHost = event.getInfo().getHostAddresses()[0];
-                    monitorPort = event.getInfo().getPort();
-                    log("RESOLVED: Machine Monitor at " + monitorHost + ":" + monitorPort);
-                }
-            });
-
-            jmdns.addServiceListener("_production-manager._tcp.local.", new ServiceListener() {
+            ServiceListener commonListener = new ServiceListener() {
                 @Override
                 public void serviceAdded(ServiceEvent event) {
                     jmdns.requestServiceInfo(event.getType(), event.getName());
@@ -209,18 +83,129 @@ public class IndustrialGUI extends JFrame {
 
                 @Override
                 public void serviceRemoved(ServiceEvent event) {
+                    log("Service lost: " + event.getName());
                 }
 
                 @Override
                 public void serviceResolved(ServiceEvent event) {
-                    productionHost = event.getInfo().getHostAddresses()[0];
-                    productionPort = event.getInfo().getPort();
-                    log("RESOLVED: Production Manager at " + productionHost + ":" + productionPort);
+                    String name = event.getName();
+                    String host = event.getInfo().getHostAddresses()[0];
+                    int port = event.getInfo().getPort();
+
+                    if (name.contains("machine-monitor")) {
+                        monitorHost = host;
+                        monitorPort = port;
+                    } else if (name.contains("production-manager")) {
+                        productionHost = host;
+                        productionPort = port;
+                    } else if (name.contains("emergency-center")) {
+                        emergencyHost = host;
+                        emergencyPort = port;
+                    }
+                    log("RESOLVED: " + name + " at " + host + ":" + port);
                 }
-            });
-        } catch (IOException e) {
+            };
+
+            jmdns.addServiceListener("_machine-monitor._tcp.local.", commonListener);
+            jmdns.addServiceListener("_production-manager._tcp.local.", commonListener);
+            jmdns.addServiceListener("_emergency-center._tcp.local.", commonListener);
+        } 
+        catch (IOException e) {
             log("JmDNS Error: " + e.getMessage());
         }
+    }
+
+    private void checkStatus() {
+        if (monitorHost == null) {
+            log("Error: Monitor service not found.");
+            return;
+        }
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort).usePlaintext().build();
+        try {
+            MachineMonitorGrpc.MachineMonitorBlockingStub stub = MachineMonitorGrpc.newBlockingStub(channel);
+            StatusResponse resp = stub.checkMachineStatus(StatusRequest.newBuilder().setMachineId(machineIdInput.getText()).build());
+            log("SERVER: " + resp.getDescription() + " (Active: " + resp.getIsActive() + ")");
+        } 
+        finally {
+            channel.shutdown();
+        }
+    }
+
+    private void streamTelemetry() {
+        if (monitorHost == null) {
+            return;
+        }
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(monitorHost, monitorPort).usePlaintext().build();
+        MachineMonitorGrpc.MachineMonitorStub stub = MachineMonitorGrpc.newStub(channel);
+        stub.streamSensorData(MonitorRequest.newBuilder().setMachineId(machineIdInput.getText()).build(), new StreamObserver<SensorData>() {
+            @Override
+            public void onNext(SensorData d) {
+                log(String.format("TELEMETRY: Temp %.2fC | Load %.2f%%", d.getTemperature(), d.getPerformanceLoad()));
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                channel.shutdown();
+            }
+
+            @Override
+            public void onCompleted() {
+                log("Telemetry stream ended.");
+                channel.shutdown();
+            }
+        });
+    }
+
+    private void uploadProduction() {
+        if (productionHost == null) {
+            return;
+        }
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(productionHost, productionPort).usePlaintext().build();
+        ProductionManagerGrpc.ProductionManagerStub stub = ProductionManagerGrpc.newStub(channel);
+        StreamObserver<LogEntry> request = stub.uploadProductionLog(new StreamObserver<ProductionSummary>() {
+            @Override
+            public void onNext(ProductionSummary s) {
+                log("SUMMARY: Processed " + s.getTotalProcessed() + " items.");
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                channel.shutdown();
+            }
+
+            @Override
+            public void onCompleted() {
+                channel.shutdown();
+            }
+        });
+        request.onNext(LogEntry.newBuilder().setProductId("Batch-01").setQualityScore(88).build());
+        request.onCompleted();
+    }
+
+    private void triggerEmergency() {
+        if (emergencyHost == null) {
+            return;
+        }
+        ManagedChannel channel = ManagedChannelBuilder.forAddress(emergencyHost, emergencyPort).usePlaintext().build();
+        EmergencyCenterGrpc.EmergencyCenterStub stub = EmergencyCenterGrpc.newStub(channel);
+        StreamObserver<AlertMessage> request = stub.emergencyChannel(new StreamObserver<AlertMessage>() {
+            @Override
+            public void onNext(AlertMessage m) {
+                log("EMERGENCY RESPONSE: " + m.getText());
+            }
+
+            @Override
+            public void onError(Throwable t) {
+                channel.shutdown();
+            }
+
+            @Override
+            public void onCompleted() {
+                channel.shutdown();
+            }
+        });
+        request.onNext(AlertMessage.newBuilder().setUser("Marcos").setText("CRITICAL ALERT").setPriority(1).build());
+        request.onCompleted();
     }
 
     public void log(String msg) {
